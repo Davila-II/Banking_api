@@ -23,6 +23,21 @@ class CompteResponse(BaseModel):
     solde: float
     date_creation: str
 
+class TransactionMontant(BaseModel):
+    montant: float
+
+class VirementData(BaseModel):
+    numero_compte_destination: str
+    montant: float
+
+class TransactionResponse(BaseModel):
+    id: str
+    type: str
+    montant: float
+    date: str
+    compte_source: str
+    compte_destination: str | None
+
 # Endpoints
 
 # Créer un compte
@@ -47,3 +62,86 @@ def creer_compte(data: CompteCreate):
 @app.get("/comptes", response_model=List[CompteResponse])
 def lister_comptes():
     return comptes
+
+# Dépôt
+@app.post("/comptes/{numero_compte}/depot", response_model=TransactionResponse)
+def depot(numero_compte: str, data: TransactionMontant):
+    if data.montant <= 0:
+        raise HTTPException(status_code=400, detail="Le montant doit être positif")
+
+    compte = next((c for c in comptes if c["numero_compte"] == numero_compte), None)
+    if not compte:
+        raise HTTPException(status_code=404, detail="Compte introuvable")
+
+    compte["solde"] += data.montant
+
+    transaction = {
+        "id": str(uuid.uuid4()),
+        "type": "depot",
+        "montant": data.montant,
+        "date": datetime.now().isoformat(),
+        "compte_source": numero_compte,
+        "compte_destination": None
+    }
+    transactions.append(transaction)
+    return transaction
+
+# Retrait
+@app.post("/comptes/{numero_compte}/retrait", response_model=TransactionResponse)
+def retrait(numero_compte: str, data: TransactionMontant):
+    if data.montant <= 0:
+        raise HTTPException(status_code=400, detail="Le montant doit être positif")
+
+    compte = next((c for c in comptes if c["numero_compte"] == numero_compte), None)
+    if not compte:
+        raise HTTPException(status_code=404, detail="Compte introuvable")
+
+    if compte["solde"] < data.montant:
+        raise HTTPException(status_code=400, detail="Solde insuffisant")
+
+    compte["solde"] -= data.montant
+
+    transaction = {
+        "id": str(uuid.uuid4()),
+        "type": "retrait",
+        "montant": data.montant,
+        "date": datetime.now().isoformat(),
+        "compte_source": numero_compte,
+        "compte_destination": None
+    }
+    transactions.append(transaction)
+    return transaction
+
+# Virement
+@app.post("/comptes/{numero_compte}/virement", response_model=TransactionResponse)
+def virement(numero_compte: str, data: VirementData):
+    if data.montant <= 0:
+        raise HTTPException(status_code=400, detail="Le montant doit être positif")
+
+    if numero_compte == data.numero_compte_destination:
+        raise HTTPException(status_code=400, detail="Impossible de virer vers le même compte")
+
+    source = next((c for c in comptes if c["numero_compte"] == numero_compte), None)
+    if not source:
+        raise HTTPException(status_code=404, detail="Compte source introuvable")
+
+    destination = next((c for c in comptes if c["numero_compte"] == data.numero_compte_destination), None)
+    if not destination:
+        raise HTTPException(status_code=404, detail="Compte destination introuvable")
+
+    if source["solde"] < data.montant:
+        raise HTTPException(status_code=400, detail="Solde insuffisant")
+
+    source["solde"] -= data.montant
+    destination["solde"] += data.montant
+
+    transaction = {
+        "id": str(uuid.uuid4()),
+        "type": "virement",
+        "montant": data.montant,
+        "date": datetime.now().isoformat(),
+        "compte_source": numero_compte,
+        "compte_destination": data.numero_compte_destination
+    }
+    transactions.append(transaction)
+    return transaction
