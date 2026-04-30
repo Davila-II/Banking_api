@@ -5,7 +5,7 @@ from datetime import datetime
 import uuid
 
 app = FastAPI(
-    title="Banking API"
+    title="Banking API",
     description="API REST pour la gestion de comptes bancaires - dépôts et retraits",
     version="1.0.0",
     docs_url="/api-docs",       
