@@ -4,7 +4,13 @@ from typing import List
 from datetime import datetime
 import uuid
 
-app = FastAPI(title="Banking API")
+app = FastAPI(
+    title="Banking API"
+    description="API REST pour la gestion de comptes bancaires - dépôts et retraits",
+    version="1.0.0",
+    docs_url="/api-docs",       
+    redoc_url="/api-redoc" 
+)
 
 # Stockage en mémoire
 comptes = []
@@ -63,6 +69,14 @@ def creer_compte(data: CompteCreate):
 def lister_comptes():
     return comptes
 
+# Consulter un compte par numéro
+@app.get("/comptes/{numero_compte}", response_model=CompteResponse)
+def consulter_compte(numero_compte: str):
+    compte = next((c for c in comptes if c["numero_compte"] == numero_compte), None)
+    if not compte:
+        raise HTTPException(status_code=404, detail="Compte introuvable")
+    return compte
+
 # Dépôt
 @app.post("/comptes/{numero_compte}/depot", response_model=TransactionResponse)
 def depot(numero_compte: str, data: TransactionMontant):
@@ -111,6 +125,40 @@ def retrait(numero_compte: str, data: TransactionMontant):
     }
     transactions.append(transaction)
     return transaction
+
+# Supprimer un compte
+@app.delete("/comptes/{numero_compte}")
+def supprimer_compte(numero_compte: str):
+    compte = next((c for c in comptes if c["numero_compte"] == numero_compte), None)
+    if not compte:
+        raise HTTPException(status_code=404, detail="Compte introuvable")
+
+    comptes.remove(compte)
+
+    txns_supprimees = [
+        t for t in transactions
+        if t["compte_source"] == numero_compte or t["compte_destination"] == numero_compte
+    ]
+    for t in txns_supprimees:
+        transactions.remove(t)
+
+    return {
+        "succes": True,
+        "compte_supprime": numero_compte,
+        "transactions_supprimees": len(txns_supprimees)
+    }
+
+# Historique des transactions d'un compte
+@app.get("/comptes/{numero_compte}/transactions", response_model=List[TransactionResponse])
+def historique_transactions(numero_compte: str):
+    compte = next((c for c in comptes if c["numero_compte"] == numero_compte), None)
+    if not compte:
+        raise HTTPException(status_code=404, detail="Compte introuvable")
+    historique = [
+        t for t in transactions
+        if t["compte_source"] == numero_compte or t["compte_destination"] == numero_compte
+    ]
+    return historique
 
 # Virement
 @app.post("/comptes/{numero_compte}/virement", response_model=TransactionResponse)
