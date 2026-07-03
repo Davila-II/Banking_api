@@ -1,0 +1,900 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+<meta charset="UTF-8">
+<title>CFG Analysis — Banking API</title>
+<style>
+  @import url('https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;700&family=Syne:wght@400;700;800&display=swap');
+
+  :root {
+    --bg: #0d1117;
+    --surface: #161b22;
+    --surface2: #1f2937;
+    --border: #30363d;
+    --accent: #58a6ff;
+    --accent2: #3fb950;
+    --accent3: #f78166;
+    --accent4: #d2a8ff;
+    --text: #e6edf3;
+    --muted: #8b949e;
+    --node-bg: #1f2937;
+    --node-border: #58a6ff;
+  }
+
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+
+  body {
+    font-family: 'Syne', sans-serif;
+    background: var(--bg);
+    color: var(--text);
+    min-height: 100vh;
+    padding: 2rem;
+  }
+
+  header {
+    text-align: center;
+    margin-bottom: 3rem;
+    padding: 2rem;
+    border: 1px solid var(--border);
+    border-radius: 12px;
+    background: var(--surface);
+    position: relative;
+    overflow: hidden;
+  }
+
+  header::before {
+    content: '';
+    position: absolute;
+    top: 0; left: 0; right: 0;
+    height: 3px;
+    background: linear-gradient(90deg, var(--accent), var(--accent4), var(--accent2));
+  }
+
+  header h1 { font-size: 2rem; font-weight: 800; margin-bottom: 0.5rem; }
+  header p { color: var(--muted); font-size: 0.95rem; }
+
+  .nav {
+    display: flex;
+    gap: 0.5rem;
+    flex-wrap: wrap;
+    justify-content: center;
+    margin-bottom: 2rem;
+  }
+
+  .nav button {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    color: var(--muted);
+    padding: 0.5rem 1rem;
+    border-radius: 8px;
+    cursor: pointer;
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 0.8rem;
+    transition: all 0.2s;
+  }
+
+  .nav button:hover, .nav button.active {
+    border-color: var(--accent);
+    color: var(--accent);
+    background: rgba(88,166,255,0.1);
+  }
+
+  .section { display: none; }
+  .section.active { display: block; }
+
+  .func-card {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 12px;
+    padding: 2rem;
+    margin-bottom: 2rem;
+  }
+
+  .func-title {
+    font-size: 1.4rem;
+    font-weight: 800;
+    color: var(--accent);
+    margin-bottom: 0.3rem;
+    font-family: 'JetBrains Mono', monospace;
+  }
+
+  .func-desc { color: var(--muted); margin-bottom: 1.5rem; font-size: 0.9rem; }
+
+  .grid-2 {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 1.5rem;
+    margin-bottom: 1.5rem;
+  }
+
+  @media(max-width: 768px) { .grid-2 { grid-template-columns: 1fr; } }
+
+  .panel {
+    background: var(--surface2);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    padding: 1.2rem;
+  }
+
+  .panel h3 {
+    font-size: 0.85rem;
+    text-transform: uppercase;
+    letter-spacing: 0.1em;
+    color: var(--muted);
+    margin-bottom: 1rem;
+    padding-bottom: 0.5rem;
+    border-bottom: 1px solid var(--border);
+  }
+
+  /* CFG SVG */
+  .cfg-container {
+    background: var(--surface2);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    padding: 1rem;
+    margin-bottom: 1.5rem;
+    overflow-x: auto;
+  }
+
+  .cfg-container h3 {
+    font-size: 0.85rem;
+    text-transform: uppercase;
+    letter-spacing: 0.1em;
+    color: var(--muted);
+    margin-bottom: 1rem;
+    padding-bottom: 0.5rem;
+    border-bottom: 1px solid var(--border);
+  }
+
+  svg text { font-family: 'JetBrains Mono', monospace; }
+
+  /* Nodes legend */
+  .node-desc {
+    list-style: none;
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 0.78rem;
+  }
+
+  .node-desc li {
+    padding: 0.35rem 0;
+    border-bottom: 1px solid var(--border);
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+  }
+
+  .node-label {
+    background: var(--accent);
+    color: #000;
+    border-radius: 50%;
+    width: 22px; height: 22px;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    font-weight: 700;
+    font-size: 0.7rem;
+    flex-shrink: 0;
+  }
+
+  .node-label.error { background: var(--accent3); }
+  .node-label.success { background: var(--accent2); }
+  .node-label.cond { background: var(--accent4); color: #000; }
+
+  /* Paths */
+  .path-item {
+    background: var(--bg);
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    padding: 0.7rem 1rem;
+    margin-bottom: 0.5rem;
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 0.78rem;
+  }
+
+  .path-label {
+    color: var(--accent4);
+    font-weight: 700;
+    margin-bottom: 0.2rem;
+    font-size: 0.75rem;
+  }
+
+  .path-nodes { color: var(--accent); }
+  .path-desc { color: var(--muted); font-size: 0.72rem; margin-top: 0.2rem; }
+
+  /* Tables */
+  table {
+    width: 100%;
+    border-collapse: collapse;
+    font-size: 0.82rem;
+    font-family: 'JetBrains Mono', monospace;
+  }
+
+  th {
+    background: var(--bg);
+    color: var(--muted);
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+    font-size: 0.7rem;
+    padding: 0.6rem 0.8rem;
+    text-align: left;
+    border-bottom: 1px solid var(--border);
+  }
+
+  td {
+    padding: 0.5rem 0.8rem;
+    border-bottom: 1px solid var(--border);
+    color: var(--text);
+  }
+
+  tr:hover td { background: rgba(88,166,255,0.05); }
+
+  .badge {
+    padding: 0.2rem 0.6rem;
+    border-radius: 4px;
+    font-size: 0.72rem;
+    font-weight: 700;
+  }
+
+  .badge-yes { background: rgba(63,185,80,0.2); color: var(--accent2); }
+  .badge-no  { background: rgba(247,129,102,0.2); color: var(--accent3); }
+  .badge-pct { background: rgba(88,166,255,0.2); color: var(--accent); }
+
+  /* Summary */
+  .summary-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+    gap: 1rem;
+    margin-bottom: 2rem;
+  }
+
+  .summary-card {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    padding: 1.2rem;
+    text-align: center;
+  }
+
+  .summary-card .val {
+    font-size: 2rem;
+    font-weight: 800;
+    color: var(--accent);
+    font-family: 'JetBrains Mono', monospace;
+  }
+
+  .summary-card .lbl {
+    font-size: 0.75rem;
+    color: var(--muted);
+    text-transform: uppercase;
+    letter-spacing: 0.08em;
+    margin-top: 0.3rem;
+  }
+
+  .tag {
+    display: inline-block;
+    padding: 0.15rem 0.5rem;
+    border-radius: 4px;
+    font-size: 0.7rem;
+    font-family: 'JetBrains Mono', monospace;
+    margin-right: 0.2rem;
+  }
+
+  .tag-stmt { background: rgba(88,166,255,0.15); color: var(--accent); border: 1px solid rgba(88,166,255,0.3); }
+  .tag-branch { background: rgba(210,168,255,0.15); color: var(--accent4); border: 1px solid rgba(210,168,255,0.3); }
+</style>
+</head>
+<body>
+
+<header>
+  <h1>🔬 Control Flow Graph Analysis</h1>
+  <p>Banking API — 5 fonctions analysées | Statement & Branch Coverage</p>
+</header>
+
+<div class="nav">
+  <button class="active" onclick="show('f1',this)">1. consulter_compte</button>
+  <button onclick="show('f2',this)">2. creer_compte</button>
+  <button onclick="show('f3',this)">3. depot</button>
+  <button onclick="show('f4',this)">4. retrait</button>
+  <button onclick="show('f5',this)">5. virement</button>
+  <button onclick="show('summary',this)">📊 Récapitulatif</button>
+</div>
+
+<!-- ======== F1: consulter_compte ======== -->
+<div id="f1" class="section active">
+  <div class="func-card">
+    <div class="func-title">consulter_compte(numero_compte)</div>
+    <div class="func-desc">Recherche et retourne un compte par son numéro. Fonction simple avec 1 condition.</div>
+
+    <div class="grid-2">
+      <div class="panel">
+        <h3>🔵 Noeuds du CFG</h3>
+        <ul class="node-desc">
+          <li><span class="node-label">N1</span> compte = next(...) — Recherche du compte</li>
+          <li><span class="node-label cond">N2</span> if not compte — Condition</li>
+          <li><span class="node-label error">N3</span> raise HTTPException 404</li>
+          <li><span class="node-label success">N4</span> return compte</li>
+        </ul>
+      </div>
+      <div class="panel">
+        <h3>🛤️ Chemins (Paths)</h3>
+        <div class="path-item">
+          <div class="path-label">PATH 1 — Succès</div>
+          <div class="path-nodes">N1 → N2 → N4</div>
+          <div class="path-desc">Compte trouvé → retour du compte</div>
+        </div>
+        <div class="path-item">
+          <div class="path-label">PATH 2 — Erreur</div>
+          <div class="path-nodes">N1 → N2 → N3</div>
+          <div class="path-desc">Compte introuvable → 404</div>
+        </div>
+      </div>
+    </div>
+
+    <div class="cfg-container">
+      <h3>📐 Control Flow Graph</h3>
+      <svg width="320" height="260" viewBox="0 0 320 260">
+        <defs>
+          <marker id="arr1" markerWidth="8" markerHeight="6" refX="6" refY="3" orient="auto">
+            <polygon points="0 0, 8 3, 0 6" fill="#58a6ff"/>
+          </marker>
+          <marker id="arr1r" markerWidth="8" markerHeight="6" refX="6" refY="3" orient="auto">
+            <polygon points="0 0, 8 3, 0 6" fill="#f78166"/>
+          </marker>
+          <marker id="arr1g" markerWidth="8" markerHeight="6" refX="6" refY="3" orient="auto">
+            <polygon points="0 0, 8 3, 0 6" fill="#3fb950"/>
+          </marker>
+        </defs>
+        <!-- N1 -->
+        <rect x="90" y="10" width="140" height="40" rx="6" fill="#1f2937" stroke="#58a6ff" stroke-width="1.5"/>
+        <text x="160" y="28" text-anchor="middle" fill="#58a6ff" font-size="11" font-weight="bold">N1</text>
+        <text x="160" y="43" text-anchor="middle" fill="#e6edf3" font-size="9">compte = next(...)</text>
+        <!-- N2 -->
+        <polygon points="160,70 240,100 160,130 80,100" fill="#1f2937" stroke="#d2a8ff" stroke-width="1.5"/>
+        <text x="160" y="97" text-anchor="middle" fill="#d2a8ff" font-size="11" font-weight="bold">N2</text>
+        <text x="160" y="111" text-anchor="middle" fill="#e6edf3" font-size="9">if not compte</text>
+        <!-- N3 -->
+        <rect x="220" y="150" width="90" height="40" rx="6" fill="#1f2937" stroke="#f78166" stroke-width="1.5"/>
+        <text x="265" y="168" text-anchor="middle" fill="#f78166" font-size="11" font-weight="bold">N3</text>
+        <text x="265" y="182" text-anchor="middle" fill="#e6edf3" font-size="9">raise 404</text>
+        <!-- N4 -->
+        <rect x="10" y="150" width="100" height="40" rx="6" fill="#1f2937" stroke="#3fb950" stroke-width="1.5"/>
+        <text x="60" y="168" text-anchor="middle" fill="#3fb950" font-size="11" font-weight="bold">N4</text>
+        <text x="60" y="182" text-anchor="middle" fill="#e6edf3" font-size="9">return compte</text>
+
+        <!-- Edges -->
+        <line x1="160" y1="50" x2="160" y2="68" stroke="#58a6ff" stroke-width="1.5" marker-end="url(#arr1)"/>
+        <line x1="80" y1="100" x2="60" y2="150" stroke="#3fb950" stroke-width="1.5" marker-end="url(#arr1g)"/>
+        <text x="50" y="128" fill="#3fb950" font-size="9">False</text>
+        <line x1="240" y1="100" x2="265" y2="150" stroke="#f78166" stroke-width="1.5" marker-end="url(#arr1r)"/>
+        <text x="250" y="128" fill="#f78166" font-size="9">True</text>
+      </svg>
+    </div>
+
+    <div class="grid-2">
+      <div class="panel">
+        <h3>📋 Statement Coverage</h3>
+        <table>
+          <tr><th>Statement</th><th>P1</th><th>P2</th><th>Couvert</th></tr>
+          <tr><td>N1</td><td>✓</td><td>✓</td><td><span class="badge badge-yes">OUI</span></td></tr>
+          <tr><td>N2</td><td>✓</td><td>✓</td><td><span class="badge badge-yes">OUI</span></td></tr>
+          <tr><td>N3</td><td>✗</td><td>✓</td><td><span class="badge badge-yes">OUI</span></td></tr>
+          <tr><td>N4</td><td>✓</td><td>✗</td><td><span class="badge badge-yes">OUI</span></td></tr>
+          <tr><td colspan="3"><strong>Statement Coverage</strong></td><td><span class="badge badge-pct">100%</span></td></tr>
+        </table>
+      </div>
+      <div class="panel">
+        <h3>🌿 Branch Coverage</h3>
+        <table>
+          <tr><th>Branche</th><th>P1</th><th>P2</th><th>Couvert</th></tr>
+          <tr><td>N2 → True (N3)</td><td>✗</td><td>✓</td><td><span class="badge badge-yes">OUI</span></td></tr>
+          <tr><td>N2 → False (N4)</td><td>✓</td><td>✗</td><td><span class="badge badge-yes">OUI</span></td></tr>
+          <tr><td colspan="3"><strong>Branch Coverage</strong></td><td><span class="badge badge-pct">100%</span></td></tr>
+        </table>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- ======== F2: creer_compte ======== -->
+<div id="f2" class="section">
+  <div class="func-card">
+    <div class="func-title">creer_compte(data)</div>
+    <div class="func-desc">Crée un nouveau compte. Contient une boucle + une condition sur l'email.</div>
+
+    <div class="grid-2">
+      <div class="panel">
+        <h3>🔵 Noeuds du CFG</h3>
+        <ul class="node-desc">
+          <li><span class="node-label">N1</span> Entrée boucle: for c in comptes</li>
+          <li><span class="node-label cond">N2</span> if c["email"] == data.email</li>
+          <li><span class="node-label error">N3</span> raise HTTPException 400</li>
+          <li><span class="node-label">N4</span> nouveau_compte = {...}</li>
+          <li><span class="node-label">N5</span> comptes.append(nouveau_compte)</li>
+          <li><span class="node-label success">N6</span> return nouveau_compte</li>
+        </ul>
+      </div>
+      <div class="panel">
+        <h3>🛤️ Chemins (Paths)</h3>
+        <div class="path-item">
+          <div class="path-label">PATH 1 — Liste vide</div>
+          <div class="path-nodes">N1 → N4 → N5 → N6</div>
+          <div class="path-desc">Aucun compte existant, création directe</div>
+        </div>
+        <div class="path-item">
+          <div class="path-label">PATH 2 — Email différent</div>
+          <div class="path-nodes">N1 → N2 → N4 → N5 → N6</div>
+          <div class="path-desc">Email non dupliqué, création réussie</div>
+        </div>
+        <div class="path-item">
+          <div class="path-label">PATH 3 — Email dupliqué</div>
+          <div class="path-nodes">N1 → N2 → N3</div>
+          <div class="path-desc">Email déjà utilisé → erreur 400</div>
+        </div>
+      </div>
+    </div>
+
+    <div class="cfg-container">
+      <h3>📐 Control Flow Graph</h3>
+      <svg width="420" height="300" viewBox="0 0 420 300">
+        <defs>
+          <marker id="a2" markerWidth="8" markerHeight="6" refX="6" refY="3" orient="auto"><polygon points="0 0,8 3,0 6" fill="#58a6ff"/></marker>
+          <marker id="a2r" markerWidth="8" markerHeight="6" refX="6" refY="3" orient="auto"><polygon points="0 0,8 3,0 6" fill="#f78166"/></marker>
+          <marker id="a2g" markerWidth="8" markerHeight="6" refX="6" refY="3" orient="auto"><polygon points="0 0,8 3,0 6" fill="#3fb950"/></marker>
+        </defs>
+        <!-- N1 loop -->
+        <rect x="140" y="10" width="140" height="40" rx="6" fill="#1f2937" stroke="#58a6ff" stroke-width="1.5"/>
+        <text x="210" y="28" text-anchor="middle" fill="#58a6ff" font-size="11" font-weight="bold">N1</text>
+        <text x="210" y="43" text-anchor="middle" fill="#e6edf3" font-size="9">for c in comptes</text>
+        <!-- N2 condition -->
+        <polygon points="210,70 300,100 210,130 120,100" fill="#1f2937" stroke="#d2a8ff" stroke-width="1.5"/>
+        <text x="210" y="97" text-anchor="middle" fill="#d2a8ff" font-size="11" font-weight="bold">N2</text>
+        <text x="210" y="112" text-anchor="middle" fill="#e6edf3" font-size="9">email == data.email</text>
+        <!-- N3 error -->
+        <rect x="310" y="150" width="100" height="40" rx="6" fill="#1f2937" stroke="#f78166" stroke-width="1.5"/>
+        <text x="360" y="168" text-anchor="middle" fill="#f78166" font-size="11" font-weight="bold">N3</text>
+        <text x="360" y="182" text-anchor="middle" fill="#e6edf3" font-size="9">raise 400</text>
+        <!-- N4 -->
+        <rect x="50" y="150" width="140" height="40" rx="6" fill="#1f2937" stroke="#58a6ff" stroke-width="1.5"/>
+        <text x="120" y="168" text-anchor="middle" fill="#58a6ff" font-size="11" font-weight="bold">N4</text>
+        <text x="120" y="182" text-anchor="middle" fill="#e6edf3" font-size="9">nouveau_compte = {...}</text>
+        <!-- N5 -->
+        <rect x="50" y="210" width="140" height="40" rx="6" fill="#1f2937" stroke="#58a6ff" stroke-width="1.5"/>
+        <text x="120" y="228" text-anchor="middle" fill="#58a6ff" font-size="11" font-weight="bold">N5</text>
+        <text x="120" y="243" text-anchor="middle" fill="#e6edf3" font-size="9">comptes.append(...)</text>
+        <!-- N6 -->
+        <rect x="50" y="265" width="140" height="30" rx="6" fill="#1f2937" stroke="#3fb950" stroke-width="1.5"/>
+        <text x="120" y="284" text-anchor="middle" fill="#3fb950" font-size="11" font-weight="bold">N6 — return</text>
+
+        <!-- Edges -->
+        <line x1="210" y1="50" x2="210" y2="68" stroke="#58a6ff" stroke-width="1.5" marker-end="url(#a2)"/>
+        <line x1="300" y1="100" x2="360" y2="150" stroke="#f78166" stroke-width="1.5" marker-end="url(#a2r)"/>
+        <text x="335" y="128" fill="#f78166" font-size="9">True</text>
+        <line x1="120" y1="100" x2="120" y2="150" stroke="#3fb950" stroke-width="1.5" marker-end="url(#a2g)"/>
+        <text x="80" y="128" fill="#3fb950" font-size="9">False</text>
+        <line x1="120" y1="190" x2="120" y2="210" stroke="#58a6ff" stroke-width="1.5" marker-end="url(#a2)"/>
+        <line x1="120" y1="250" x2="120" y2="265" stroke="#58a6ff" stroke-width="1.5" marker-end="url(#a2)"/>
+      </svg>
+    </div>
+
+    <div class="grid-2">
+      <div class="panel">
+        <h3>📋 Statement Coverage</h3>
+        <table>
+          <tr><th>Statement</th><th>P1</th><th>P2</th><th>P3</th><th>Couvert</th></tr>
+          <tr><td>N1</td><td>✓</td><td>✓</td><td>✓</td><td><span class="badge badge-yes">OUI</span></td></tr>
+          <tr><td>N2</td><td>✗</td><td>✓</td><td>✓</td><td><span class="badge badge-yes">OUI</span></td></tr>
+          <tr><td>N3</td><td>✗</td><td>✗</td><td>✓</td><td><span class="badge badge-yes">OUI</span></td></tr>
+          <tr><td>N4</td><td>✓</td><td>✓</td><td>✗</td><td><span class="badge badge-yes">OUI</span></td></tr>
+          <tr><td>N5</td><td>✓</td><td>✓</td><td>✗</td><td><span class="badge badge-yes">OUI</span></td></tr>
+          <tr><td>N6</td><td>✓</td><td>✓</td><td>✗</td><td><span class="badge badge-yes">OUI</span></td></tr>
+          <tr><td colspan="4"><strong>Statement Coverage</strong></td><td><span class="badge badge-pct">100%</span></td></tr>
+        </table>
+      </div>
+      <div class="panel">
+        <h3>🌿 Branch Coverage</h3>
+        <table>
+          <tr><th>Branche</th><th>P1</th><th>P2</th><th>P3</th><th>Couvert</th></tr>
+          <tr><td>N1 → vide (N4)</td><td>✓</td><td>✗</td><td>✗</td><td><span class="badge badge-yes">OUI</span></td></tr>
+          <tr><td>N2 → True (N3)</td><td>✗</td><td>✗</td><td>✓</td><td><span class="badge badge-yes">OUI</span></td></tr>
+          <tr><td>N2 → False (N4)</td><td>✗</td><td>✓</td><td>✗</td><td><span class="badge badge-yes">OUI</span></td></tr>
+          <tr><td colspan="4"><strong>Branch Coverage</strong></td><td><span class="badge badge-pct">100%</span></td></tr>
+        </table>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- ======== F3: depot ======== -->
+<div id="f3" class="section">
+  <div class="func-card">
+    <div class="func-title">depot(numero_compte, data)</div>
+    <div class="func-desc">Effectue un dépôt sur un compte. Contient 2 conditions : montant valide + compte existant.</div>
+
+    <div class="grid-2">
+      <div class="panel">
+        <h3>🔵 Noeuds du CFG</h3>
+        <ul class="node-desc">
+          <li><span class="node-label cond">N1</span> if data.montant &lt;= 0</li>
+          <li><span class="node-label error">N2</span> raise HTTPException 400</li>
+          <li><span class="node-label">N3</span> compte = next(...)</li>
+          <li><span class="node-label cond">N4</span> if not compte</li>
+          <li><span class="node-label error">N5</span> raise HTTPException 404</li>
+          <li><span class="node-label">N6</span> compte["solde"] += montant</li>
+          <li><span class="node-label">N7</span> transaction = {...}</li>
+          <li><span class="node-label">N8</span> transactions.append(tx)</li>
+          <li><span class="node-label success">N9</span> return transaction</li>
+        </ul>
+      </div>
+      <div class="panel">
+        <h3>🛤️ Chemins (Paths)</h3>
+        <div class="path-item">
+          <div class="path-label">PATH 1 — Montant invalide</div>
+          <div class="path-nodes">N1 → N2</div>
+          <div class="path-desc">Montant ≤ 0 → erreur 400</div>
+        </div>
+        <div class="path-item">
+          <div class="path-label">PATH 2 — Compte introuvable</div>
+          <div class="path-nodes">N1 → N3 → N4 → N5</div>
+          <div class="path-desc">Montant ok, compte inexistant → 404</div>
+        </div>
+        <div class="path-item">
+          <div class="path-label">PATH 3 — Succès</div>
+          <div class="path-nodes">N1 → N3 → N4 → N6 → N7 → N8 → N9</div>
+          <div class="path-desc">Dépôt effectué avec succès</div>
+        </div>
+      </div>
+    </div>
+
+    <div class="grid-2">
+      <div class="panel">
+        <h3>📋 Statement Coverage</h3>
+        <table>
+          <tr><th>Statement</th><th>P1</th><th>P2</th><th>P3</th><th>Couvert</th></tr>
+          <tr><td>N1</td><td>✓</td><td>✓</td><td>✓</td><td><span class="badge badge-yes">OUI</span></td></tr>
+          <tr><td>N2</td><td>✓</td><td>✗</td><td>✗</td><td><span class="badge badge-yes">OUI</span></td></tr>
+          <tr><td>N3</td><td>✗</td><td>✓</td><td>✓</td><td><span class="badge badge-yes">OUI</span></td></tr>
+          <tr><td>N4</td><td>✗</td><td>✓</td><td>✓</td><td><span class="badge badge-yes">OUI</span></td></tr>
+          <tr><td>N5</td><td>✗</td><td>✓</td><td>✗</td><td><span class="badge badge-yes">OUI</span></td></tr>
+          <tr><td>N6</td><td>✗</td><td>✗</td><td>✓</td><td><span class="badge badge-yes">OUI</span></td></tr>
+          <tr><td>N7</td><td>✗</td><td>✗</td><td>✓</td><td><span class="badge badge-yes">OUI</span></td></tr>
+          <tr><td>N8</td><td>✗</td><td>✗</td><td>✓</td><td><span class="badge badge-yes">OUI</span></td></tr>
+          <tr><td>N9</td><td>✗</td><td>✗</td><td>✓</td><td><span class="badge badge-yes">OUI</span></td></tr>
+          <tr><td colspan="4"><strong>Statement Coverage</strong></td><td><span class="badge badge-pct">100%</span></td></tr>
+        </table>
+      </div>
+      <div class="panel">
+        <h3>🌿 Branch Coverage</h3>
+        <table>
+          <tr><th>Branche</th><th>P1</th><th>P2</th><th>P3</th><th>Couvert</th></tr>
+          <tr><td>N1 → True (N2)</td><td>✓</td><td>✗</td><td>✗</td><td><span class="badge badge-yes">OUI</span></td></tr>
+          <tr><td>N1 → False (N3)</td><td>✗</td><td>✓</td><td>✓</td><td><span class="badge badge-yes">OUI</span></td></tr>
+          <tr><td>N4 → True (N5)</td><td>✗</td><td>✓</td><td>✗</td><td><span class="badge badge-yes">OUI</span></td></tr>
+          <tr><td>N4 → False (N6)</td><td>✗</td><td>✗</td><td>✓</td><td><span class="badge badge-yes">OUI</span></td></tr>
+          <tr><td colspan="4"><strong>Branch Coverage</strong></td><td><span class="badge badge-pct">100%</span></td></tr>
+        </table>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- ======== F4: retrait ======== -->
+<div id="f4" class="section">
+  <div class="func-card">
+    <div class="func-title">retrait(numero_compte, data)</div>
+    <div class="func-desc">Effectue un retrait. Contient 3 conditions : montant valide, compte existant, solde suffisant.</div>
+
+    <div class="grid-2">
+      <div class="panel">
+        <h3>🔵 Noeuds du CFG</h3>
+        <ul class="node-desc">
+          <li><span class="node-label cond">N1</span> if data.montant &lt;= 0</li>
+          <li><span class="node-label error">N2</span> raise HTTPException 400</li>
+          <li><span class="node-label">N3</span> compte = next(...)</li>
+          <li><span class="node-label cond">N4</span> if not compte</li>
+          <li><span class="node-label error">N5</span> raise HTTPException 404</li>
+          <li><span class="node-label cond">N6</span> if solde &lt; montant</li>
+          <li><span class="node-label error">N7</span> raise HTTPException 400</li>
+          <li><span class="node-label">N8</span> compte["solde"] -= montant</li>
+          <li><span class="node-label">N9</span> transaction = {...}</li>
+          <li><span class="node-label">N10</span> transactions.append(tx)</li>
+          <li><span class="node-label success">N11</span> return transaction</li>
+        </ul>
+      </div>
+      <div class="panel">
+        <h3>🛤️ Chemins (Paths)</h3>
+        <div class="path-item">
+          <div class="path-label">PATH 1 — Montant invalide</div>
+          <div class="path-nodes">N1 → N2</div>
+          <div class="path-desc">Montant ≤ 0 → erreur 400</div>
+        </div>
+        <div class="path-item">
+          <div class="path-label">PATH 2 — Compte introuvable</div>
+          <div class="path-nodes">N1 → N3 → N4 → N5</div>
+          <div class="path-desc">Compte inexistant → 404</div>
+        </div>
+        <div class="path-item">
+          <div class="path-label">PATH 3 — Solde insuffisant</div>
+          <div class="path-nodes">N1 → N3 → N4 → N6 → N7</div>
+          <div class="path-desc">Solde &lt; montant → erreur 400</div>
+        </div>
+        <div class="path-item">
+          <div class="path-label">PATH 4 — Succès</div>
+          <div class="path-nodes">N1 → N3 → N4 → N6 → N8 → N9 → N10 → N11</div>
+          <div class="path-desc">Retrait effectué avec succès</div>
+        </div>
+      </div>
+    </div>
+
+    <div class="grid-2">
+      <div class="panel">
+        <h3>📋 Statement Coverage</h3>
+        <table>
+          <tr><th>Statement</th><th>P1</th><th>P2</th><th>P3</th><th>P4</th><th>Couvert</th></tr>
+          <tr><td>N1</td><td>✓</td><td>✓</td><td>✓</td><td>✓</td><td><span class="badge badge-yes">OUI</span></td></tr>
+          <tr><td>N2</td><td>✓</td><td>✗</td><td>✗</td><td>✗</td><td><span class="badge badge-yes">OUI</span></td></tr>
+          <tr><td>N3</td><td>✗</td><td>✓</td><td>✓</td><td>✓</td><td><span class="badge badge-yes">OUI</span></td></tr>
+          <tr><td>N4</td><td>✗</td><td>✓</td><td>✓</td><td>✓</td><td><span class="badge badge-yes">OUI</span></td></tr>
+          <tr><td>N5</td><td>✗</td><td>✓</td><td>✗</td><td>✗</td><td><span class="badge badge-yes">OUI</span></td></tr>
+          <tr><td>N6</td><td>✗</td><td>✗</td><td>✓</td><td>✓</td><td><span class="badge badge-yes">OUI</span></td></tr>
+          <tr><td>N7</td><td>✗</td><td>✗</td><td>✓</td><td>✗</td><td><span class="badge badge-yes">OUI</span></td></tr>
+          <tr><td>N8</td><td>✗</td><td>✗</td><td>✗</td><td>✓</td><td><span class="badge badge-yes">OUI</span></td></tr>
+          <tr><td>N9-N11</td><td>✗</td><td>✗</td><td>✗</td><td>✓</td><td><span class="badge badge-yes">OUI</span></td></tr>
+          <tr><td colspan="5"><strong>Statement Coverage</strong></td><td><span class="badge badge-pct">100%</span></td></tr>
+        </table>
+      </div>
+      <div class="panel">
+        <h3>🌿 Branch Coverage</h3>
+        <table>
+          <tr><th>Branche</th><th>P1</th><th>P2</th><th>P3</th><th>P4</th><th>Couvert</th></tr>
+          <tr><td>N1→True (N2)</td><td>✓</td><td>✗</td><td>✗</td><td>✗</td><td><span class="badge badge-yes">OUI</span></td></tr>
+          <tr><td>N1→False (N3)</td><td>✗</td><td>✓</td><td>✓</td><td>✓</td><td><span class="badge badge-yes">OUI</span></td></tr>
+          <tr><td>N4→True (N5)</td><td>✗</td><td>✓</td><td>✗</td><td>✗</td><td><span class="badge badge-yes">OUI</span></td></tr>
+          <tr><td>N4→False (N6)</td><td>✗</td><td>✗</td><td>✓</td><td>✓</td><td><span class="badge badge-yes">OUI</span></td></tr>
+          <tr><td>N6→True (N7)</td><td>✗</td><td>✗</td><td>✓</td><td>✗</td><td><span class="badge badge-yes">OUI</span></td></tr>
+          <tr><td>N6→False (N8)</td><td>✗</td><td>✗</td><td>✗</td><td>✓</td><td><span class="badge badge-yes">OUI</span></td></tr>
+          <tr><td colspan="5"><strong>Branch Coverage</strong></td><td><span class="badge badge-pct">100%</span></td></tr>
+        </table>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- ======== F5: virement ======== -->
+<div id="f5" class="section">
+  <div class="func-card">
+    <div class="func-title">virement(numero_compte, data)</div>
+    <div class="func-desc">Effectue un virement entre deux comptes. Contient 5 conditions de validation.</div>
+
+    <div class="grid-2">
+      <div class="panel">
+        <h3>🔵 Noeuds du CFG</h3>
+        <ul class="node-desc">
+          <li><span class="node-label cond">N1</span> if montant &lt;= 0</li>
+          <li><span class="node-label error">N2</span> raise 400 — montant</li>
+          <li><span class="node-label cond">N3</span> if source == destination</li>
+          <li><span class="node-label error">N4</span> raise 400 — même compte</li>
+          <li><span class="node-label">N5</span> source = next(...)</li>
+          <li><span class="node-label cond">N6</span> if not source</li>
+          <li><span class="node-label error">N7</span> raise 404 — source</li>
+          <li><span class="node-label">N8</span> destination = next(...)</li>
+          <li><span class="node-label cond">N9</span> if not destination</li>
+          <li><span class="node-label error">N10</span> raise 404 — destination</li>
+          <li><span class="node-label cond">N11</span> if solde &lt; montant</li>
+          <li><span class="node-label error">N12</span> raise 400 — solde</li>
+          <li><span class="node-label">N13</span> source["solde"] -= montant</li>
+          <li><span class="node-label">N14</span> destination["solde"] += montant</li>
+          <li><span class="node-label">N15</span> transaction = {...}</li>
+          <li><span class="node-label">N16</span> transactions.append(tx)</li>
+          <li><span class="node-label success">N17</span> return transaction</li>
+        </ul>
+      </div>
+      <div class="panel">
+        <h3>🛤️ Chemins (Paths)</h3>
+        <div class="path-item">
+          <div class="path-label">PATH 1 — Montant invalide</div>
+          <div class="path-nodes">N1 → N2</div>
+          <div class="path-desc">Montant ≤ 0</div>
+        </div>
+        <div class="path-item">
+          <div class="path-label">PATH 2 — Même compte</div>
+          <div class="path-nodes">N1 → N3 → N4</div>
+          <div class="path-desc">Source = destination</div>
+        </div>
+        <div class="path-item">
+          <div class="path-label">PATH 3 — Source introuvable</div>
+          <div class="path-nodes">N1 → N3 → N5 → N6 → N7</div>
+          <div class="path-desc">Compte source n'existe pas</div>
+        </div>
+        <div class="path-item">
+          <div class="path-label">PATH 4 — Destination introuvable</div>
+          <div class="path-nodes">N1 → N3 → N5 → N6 → N8 → N9 → N10</div>
+          <div class="path-desc">Compte destination n'existe pas</div>
+        </div>
+        <div class="path-item">
+          <div class="path-label">PATH 5 — Solde insuffisant</div>
+          <div class="path-nodes">N1 → N3 → N5 → N6 → N8 → N9 → N11 → N12</div>
+          <div class="path-desc">Solde source insuffisant</div>
+        </div>
+        <div class="path-item">
+          <div class="path-label">PATH 6 — Succès</div>
+          <div class="path-nodes">N1 → N3 → N5 → N6 → N8 → N9 → N11 → N13 → N14 → N15 → N16 → N17</div>
+          <div class="path-desc">Virement effectué avec succès</div>
+        </div>
+      </div>
+    </div>
+
+    <div class="grid-2">
+      <div class="panel">
+        <h3>📋 Statement Coverage</h3>
+        <table>
+          <tr><th>Node</th><th>P1</th><th>P2</th><th>P3</th><th>P4</th><th>P5</th><th>P6</th><th>✓</th></tr>
+          <tr><td>N1</td><td>✓</td><td>✓</td><td>✓</td><td>✓</td><td>✓</td><td>✓</td><td><span class="badge badge-yes">OUI</span></td></tr>
+          <tr><td>N2</td><td>✓</td><td>✗</td><td>✗</td><td>✗</td><td>✗</td><td>✗</td><td><span class="badge badge-yes">OUI</span></td></tr>
+          <tr><td>N3</td><td>✗</td><td>✓</td><td>✓</td><td>✓</td><td>✓</td><td>✓</td><td><span class="badge badge-yes">OUI</span></td></tr>
+          <tr><td>N4</td><td>✗</td><td>✓</td><td>✗</td><td>✗</td><td>✗</td><td>✗</td><td><span class="badge badge-yes">OUI</span></td></tr>
+          <tr><td>N5</td><td>✗</td><td>✗</td><td>✓</td><td>✓</td><td>✓</td><td>✓</td><td><span class="badge badge-yes">OUI</span></td></tr>
+          <tr><td>N6</td><td>✗</td><td>✗</td><td>✓</td><td>✓</td><td>✓</td><td>✓</td><td><span class="badge badge-yes">OUI</span></td></tr>
+          <tr><td>N7</td><td>✗</td><td>✗</td><td>✓</td><td>✗</td><td>✗</td><td>✗</td><td><span class="badge badge-yes">OUI</span></td></tr>
+          <tr><td>N8</td><td>✗</td><td>✗</td><td>✗</td><td>✓</td><td>✓</td><td>✓</td><td><span class="badge badge-yes">OUI</span></td></tr>
+          <tr><td>N9</td><td>✗</td><td>✗</td><td>✗</td><td>✓</td><td>✓</td><td>✓</td><td><span class="badge badge-yes">OUI</span></td></tr>
+          <tr><td>N10</td><td>✗</td><td>✗</td><td>✗</td><td>✓</td><td>✗</td><td>✗</td><td><span class="badge badge-yes">OUI</span></td></tr>
+          <tr><td>N11</td><td>✗</td><td>✗</td><td>✗</td><td>✗</td><td>✓</td><td>✓</td><td><span class="badge badge-yes">OUI</span></td></tr>
+          <tr><td>N12</td><td>✗</td><td>✗</td><td>✗</td><td>✗</td><td>✓</td><td>✗</td><td><span class="badge badge-yes">OUI</span></td></tr>
+          <tr><td>N13-N17</td><td>✗</td><td>✗</td><td>✗</td><td>✗</td><td>✗</td><td>✓</td><td><span class="badge badge-yes">OUI</span></td></tr>
+          <tr><td colspan="7"><strong>Statement Coverage</strong></td><td><span class="badge badge-pct">100%</span></td></tr>
+        </table>
+      </div>
+      <div class="panel">
+        <h3>🌿 Branch Coverage</h3>
+        <table>
+          <tr><th>Branche</th><th>P1</th><th>P2</th><th>P3</th><th>P4</th><th>P5</th><th>P6</th><th>✓</th></tr>
+          <tr><td>N1→True (N2)</td><td>✓</td><td>✗</td><td>✗</td><td>✗</td><td>✗</td><td>✗</td><td><span class="badge badge-yes">OUI</span></td></tr>
+          <tr><td>N1→False (N3)</td><td>✗</td><td>✓</td><td>✓</td><td>✓</td><td>✓</td><td>✓</td><td><span class="badge badge-yes">OUI</span></td></tr>
+          <tr><td>N3→True (N4)</td><td>✗</td><td>✓</td><td>✗</td><td>✗</td><td>✗</td><td>✗</td><td><span class="badge badge-yes">OUI</span></td></tr>
+          <tr><td>N3→False (N5)</td><td>✗</td><td>✗</td><td>✓</td><td>✓</td><td>✓</td><td>✓</td><td><span class="badge badge-yes">OUI</span></td></tr>
+          <tr><td>N6→True (N7)</td><td>✗</td><td>✗</td><td>✓</td><td>✗</td><td>✗</td><td>✗</td><td><span class="badge badge-yes">OUI</span></td></tr>
+          <tr><td>N6→False (N8)</td><td>✗</td><td>✗</td><td>✗</td><td>✓</td><td>✓</td><td>✓</td><td><span class="badge badge-yes">OUI</span></td></tr>
+          <tr><td>N9→True (N10)</td><td>✗</td><td>✗</td><td>✗</td><td>✓</td><td>✗</td><td>✗</td><td><span class="badge badge-yes">OUI</span></td></tr>
+          <tr><td>N9→False (N11)</td><td>✗</td><td>✗</td><td>✗</td><td>✗</td><td>✓</td><td>✓</td><td><span class="badge badge-yes">OUI</span></td></tr>
+          <tr><td>N11→True (N12)</td><td>✗</td><td>✗</td><td>✗</td><td>✗</td><td>✓</td><td>✗</td><td><span class="badge badge-yes">OUI</span></td></tr>
+          <tr><td>N11→False (N13)</td><td>✗</td><td>✗</td><td>✗</td><td>✗</td><td>✗</td><td>✓</td><td><span class="badge badge-yes">OUI</span></td></tr>
+          <tr><td colspan="7"><strong>Branch Coverage</strong></td><td><span class="badge badge-pct">100%</span></td></tr>
+        </table>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- ======== SUMMARY ======== -->
+<div id="summary" class="section">
+  <div class="func-card">
+    <div class="func-title">📊 Tableau Récapitulatif Global</div>
+    <div class="func-desc">Synthèse de l'analyse de couverture des 5 fonctions de l'API bancaire.</div>
+
+    <div class="summary-grid">
+      <div class="summary-card">
+        <div class="val">5</div>
+        <div class="lbl">Fonctions analysées</div>
+      </div>
+      <div class="summary-card">
+        <div class="val">16</div>
+        <div class="lbl">Chemins totaux</div>
+      </div>
+      <div class="summary-card">
+        <div class="val">100%</div>
+        <div class="lbl">Statement Coverage moyen</div>
+      </div>
+      <div class="summary-card">
+        <div class="val">100%</div>
+        <div class="lbl">Branch Coverage moyen</div>
+      </div>
+    </div>
+
+    <div class="panel">
+      <h3>📋 Coverage Table — Vue Globale</h3>
+      <table>
+        <tr>
+          <th>Fonction</th>
+          <th>Noeuds</th>
+          <th>Branches</th>
+          <th>Chemins</th>
+          <th>Min tests</th>
+          <th>Stmt Coverage</th>
+          <th>Branch Coverage</th>
+        </tr>
+        <tr>
+          <td><code>consulter_compte</code></td>
+          <td>4</td>
+          <td>2</td>
+          <td>2</td>
+          <td>2</td>
+          <td><span class="badge badge-pct">100%</span></td>
+          <td><span class="badge badge-pct">100%</span></td>
+        </tr>
+        <tr>
+          <td><code>creer_compte</code></td>
+          <td>6</td>
+          <td>3</td>
+          <td>3</td>
+          <td>3</td>
+          <td><span class="badge badge-pct">100%</span></td>
+          <td><span class="badge badge-pct">100%</span></td>
+        </tr>
+        <tr>
+          <td><code>depot</code></td>
+          <td>9</td>
+          <td>4</td>
+          <td>3</td>
+          <td>3</td>
+          <td><span class="badge badge-pct">100%</span></td>
+          <td><span class="badge badge-pct">100%</span></td>
+        </tr>
+        <tr>
+          <td><code>retrait</code></td>
+          <td>11</td>
+          <td>6</td>
+          <td>4</td>
+          <td>4</td>
+          <td><span class="badge badge-pct">100%</span></td>
+          <td><span class="badge badge-pct">100%</span></td>
+        </tr>
+        <tr>
+          <td><code>virement</code></td>
+          <td>17</td>
+          <td>10</td>
+          <td>6</td>
+          <td>6</td>
+          <td><span class="badge badge-pct">100%</span></td>
+          <td><span class="badge badge-pct">100%</span></td>
+        </tr>
+        <tr style="background: rgba(88,166,255,0.05);">
+          <td><strong>TOTAL</strong></td>
+          <td><strong>47</strong></td>
+          <td><strong>25</strong></td>
+          <td><strong>18</strong></td>
+          <td><strong>18</strong></td>
+          <td><span class="badge badge-pct">100%</span></td>
+          <td><span class="badge badge-pct">100%</span></td>
+        </tr>
+      </table>
+    </div>
+
+    <br>
+    <div class="panel">
+      <h3>📌 Formules utilisées</h3>
+      <table>
+        <tr>
+          <th>Métrique</th>
+          <th>Formule</th>
+          <th>Objectif</th>
+        </tr>
+        <tr>
+          <td><span class="tag tag-stmt">Statement Coverage</span></td>
+          <td>(Noeuds exécutés / Total noeuds) × 100</td>
+          <td>Chaque instruction exécutée ≥ 1 fois</td>
+        </tr>
+        <tr>
+          <td><span class="tag tag-branch">Branch Coverage</span></td>
+          <td>(Branches exécutées / Total branches) × 100</td>
+          <td>Chaque True/False testé ≥ 1 fois</td>
+        </tr>
+        <tr>
+          <td>Branches par condition</td>
+          <td>2 branches par if (True + False)</td>
+          <td>Branch Coverage ≥ Statement Coverage</td>
+        </tr>
+      </table>
+    </div>
+  </div>
+</div>
+
+<script>
+function show(id, btn) {
+  document.querySelectorAll('.section').forEach(s => s.classList.remove('active'));
+  document.querySelectorAll('.nav button').forEach(b => b.classList.remove('active'));
+  document.getElementById(id).classList.add('active');
+  btn.classList.add('active');
+}
+</script>
+</body>
+</html>

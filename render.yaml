@@ -1,0 +1,29 @@
+services:
+  # API backend
+  - type: web
+    name: banking-api
+    env: python
+    rootDir: banking_api
+    buildCommand: pip install -r requirements.txt
+    startCommand: uvicorn main:app --host 0.0.0.0 --port 10000
+    envVars:
+      - key: SUPABASE_URL
+        value: https://lgghizadrwshujwipasn.supabase.co
+        sync: false
+      - key: SUPABASE_SERVICE_ROLE_KEY
+        sync: false
+      - key: PYTHON_VERSION
+        value: "3.11"
+        sync: false
+
+  # Frontend statique
+  - type: web
+    name: banking-frontend
+    env: static
+    rootDir: frontend
+    buildCommand: null
+    staticPublishPath: .
+    routes:
+      - type: rewrite
+        source: /*
+        destination: /index.html
