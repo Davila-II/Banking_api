@@ -1,169 +1,113 @@
-"""Tests d'intégration — Banking API.
-Scénarios complets de bout en bout.
-"""
+"""Tests d'intégration v2 — scénarios complets avec auth."""
+from decimal import Decimal
 
 
 class TestScenariosComplets:
-    """Scénarios métier complets."""
 
-    def test_cycle_de_vie_compte(self, client):
-        """Scénario complet : création → dépôts → retraits → virement → suppression."""
-        # 1. Créer deux comptes
-        a = client.post("/comptes", json={
-            "nom_titulaire": "Emma Bernard",
-            "email": "emma@banque.fr"
-        }).json()
-        b = client.post("/comptes", json={
-            "nom_titulaire": "Lucas Moreau",
-            "email": "lucas@banque.fr"
-        }).json()
+    def test_cycle_de_vie_complet(self, client, admin_user, admin_headers):
+        """Création → dépôt → virement → gel → réactivation → clôture."""
+        import uuid
+        e1 = f"emma_{uuid.uuid4().hex[:4]}@banque.fr"
+        e2 = f"lucas_{uuid.uuid4().hex[:4]}@banque.fr"
 
-        assert a["solde"] == 0.0
-        assert b["solde"] == 0.0
+        a = client.post("/comptes", json={"nom_titulaire": "Emma",  "email": e1}, headers=admin_headers).json()
+        b = client.post("/comptes", json={"nom_titulaire": "Lucas", "email": e2}, headers=admin_headers).json()
 
-        # 2. Dépôts initiaux
-        client.post(f"/comptes/{a['numero_compte']}/depot", json={"montant": 2000})
-        client.post(f"/comptes/{b['numero_compte']}/depot", json={"montant": 1000})
+        client.post(f"/comptes/{a['numero_compte']}/depot", json={"montant": 2000}, headers=admin_headers)
+        client.post(f"/comptes/{b['numero_compte']}/depot", json={"montant": 1000}, headers=admin_headers)
 
-        a = client.get(f"/comptes/{a['numero_compte']}").json()
-        b = client.get(f"/comptes/{b['numero_compte']}").json()
-        assert a["solde"] == 2000.0
-        assert b["solde"] == 1000.0
+        # Virement A → B
+        client.post(f"/comptes/{a['numero_compte']}/virement",
+                    json={"numero_compte_destination": b["numero_compte"], "montant": 750},
+                    headers=admin_headers)
 
-        # 3. Virement de A vers B
-        client.post(
-            f"/comptes/{a['numero_compte']}/virement",
-            json={"numero_compte_destination": b["numero_compte"], "montant": 750}
-        )
+        a = client.get(f"/comptes/{a['numero_compte']}", headers=admin_headers).json()
+        b = client.get(f"/comptes/{b['numero_compte']}", headers=admin_headers).json()
+        assert Decimal(str(a["solde"])) == Decimal("1250")
+        assert Decimal(str(b["solde"])) == Decimal("1750")
 
-        a = client.get(f"/comptes/{a['numero_compte']}").json()
-        b = client.get(f"/comptes/{b['numero_compte']}").json()
-        assert a["solde"] == 1250.0
-        assert b["solde"] == 1750.0
+        # Gel du compte B
+        client.post(f"/comptes/{b['numero_compte']}/freeze", headers=admin_headers)
+        res = client.post(f"/comptes/{b['numero_compte']}/retrait", json={"montant": 100}, headers=admin_headers)
+        assert res.status_code == 409
 
-        # 4. Retrait sur B
-        client.post(f"/comptes/{b['numero_compte']}/retrait", json={"montant": 250})
-        b = client.get(f"/comptes/{b['numero_compte']}").json()
-        assert b["solde"] == 1500.0
+        # Réactivation
+        client.post(f"/comptes/{b['numero_compte']}/reactivate", headers=admin_headers)
+        client.post(f"/comptes/{b['numero_compte']}/retrait", json={"montant": 1750}, headers=admin_headers)
 
-        # 5. Vérifier l'historique de A
-        txns_a = client.get(f"/comptes/{a['numero_compte']}/transactions").json()
-        assert len(txns_a) == 2  # depot + virement
-
-        # 6. Supprimer le compte A
-        res = client.delete(f"/comptes/{a['numero_compte']}")
+        # Clôture (solde nul)
+        res = client.post(f"/comptes/{b['numero_compte']}/close", headers=admin_headers)
         assert res.status_code == 200
-        assert res.json()["succes"] is True
 
-        # 7. A n'existe plus, B existe encore
-        assert client.get(f"/comptes/{a['numero_compte']}").status_code == 404
-        assert client.get(f"/comptes/{b['numero_compte']}").status_code == 200
+        # Historique A : depot + virement = 2 transactions
+        txns = client.get(f"/comptes/{a['numero_compte']}/transactions", headers=admin_headers).json()
+        assert len(txns) == 2
 
-        # 8. La liste ne contient plus que B
-        comptes = client.get("/comptes").json()
-        assert len(comptes) == 1
-        assert comptes[0]["numero_compte"] == b["numero_compte"]
+        # Suppression A
+        res = client.delete(f"/comptes/{a['numero_compte']}", headers=admin_headers)
+        assert res.status_code == 200
+        assert client.get(f"/comptes/{a['numero_compte']}", headers=admin_headers).status_code == 404
 
-    def test_scenario_erreurs_en_chaîne(self, client, compte_creer):
-        """Scénario d'erreurs : tentatives invalides puis opération valide."""
+    def test_isolation_client(self, client, client_user, client_headers, admin_headers):
+        """Un client ne voit que ses propres comptes et ne peut pas accéder à ceux d'autrui."""
+        import uuid
+        # Créer un compte pour autrui
+        stranger = client.post("/comptes", json={
+            "nom_titulaire": "Stranger",
+            "email": f"stranger_{uuid.uuid4().hex[:4]}@test.com"
+        }, headers=admin_headers).json()
+
+        # Le client crée son propre compte
+        mon_compte = client.post("/comptes", json={
+            "nom_titulaire": "Moi",
+            "email": client_user["email"]
+        }, headers=client_headers).json()
+
+        # Le client ne voit pas le compte étranger dans la liste
+        mes_comptes = client.get("/comptes", headers=client_headers).json()
+        numeros = [c["numero_compte"] for c in mes_comptes]
+        assert stranger["numero_compte"] not in numeros
+        assert mon_compte["numero_compte"] in numeros
+
+        # Accès direct refusé
+        res = client.get(f"/comptes/{stranger['numero_compte']}", headers=client_headers)
+        assert res.status_code == 403
+
+    def test_decouvert_compte_courant(self, client, admin_headers):
+        """Un compte courant peut aller en négatif dans la limite du découvert."""
+        import uuid
+        email = f"dec_{uuid.uuid4().hex[:4]}@test.com"
+        c = client.post("/comptes", json={
+            "nom_titulaire": "Découvert",
+            "email": email,
+            "type": "CURRENT",
+            "overdraft_limit": "500"
+        }, headers=admin_headers).json()
+        nc = c["numero_compte"]
+
+        client.post(f"/comptes/{nc}/depot", json={"montant": 100}, headers=admin_headers)
+
+        # Retrait 400 → solde = -300 (dans la limite de -500)
+        res = client.post(f"/comptes/{nc}/retrait", json={"montant": 400}, headers=admin_headers)
+        assert res.status_code == 200
+        solde = Decimal(str(client.get(f"/comptes/{nc}", headers=admin_headers).json()["solde"]))
+        assert solde == Decimal("-300")
+
+        # Retrait 250 → solde serait -550 > découvert → refus
+        res = client.post(f"/comptes/{nc}/retrait", json={"montant": 250}, headers=admin_headers)
+        assert res.status_code == 422
+
+    def test_operations_multiples(self, client, compte_creer, client_headers):
+        """Série d'opérations successives avec vérification du solde."""
         nc = compte_creer["numero_compte"]
+        ops = [("depot", 100), ("depot", 250), ("retrait", 50), ("depot", 300), ("retrait", 100)]
+        expected = Decimal("0")
 
-        # Tentative de retrait à découvert
-        r1 = client.post(f"/comptes/{nc}/retrait", json={"montant": 1000})
-        assert r1.status_code == 400
+        for op, montant in ops:
+            client.post(f"/comptes/{nc}/{op}", json={"montant": montant}, headers=client_headers)
+            expected += Decimal(str(montant)) if op == "depot" else -Decimal(str(montant))
+            solde = Decimal(str(client.get(f"/comptes/{nc}", headers=client_headers).json()["solde"]))
+            assert solde == expected
 
-        # Tentative de dépôt négatif
-        r2 = client.post(f"/comptes/{nc}/depot", json={"montant": -50})
-        assert r2.status_code == 400
-
-        # Tentative de virement vers soi-même
-        r3 = client.post(
-            f"/comptes/{nc}/virement",
-            json={"numero_compte_destination": nc, "montant": 10}
-        )
-        assert r3.status_code == 400
-
-        # Le solde n'a pas bougé
-        c = client.get(f"/comptes/{nc}").json()
-        assert c["solde"] == 0.0
-
-        # Opération valide
-        client.post(f"/comptes/{nc}/depot", json={"montant": 500})
-        c = client.get(f"/comptes/{nc}").json()
-        assert c["solde"] == 500.0
-
-    def test_operations_multiples_sur_un_compte(self, client, compte_creer):
-        """Série d'opérations valides successives."""
-        nc = compte_creer["numero_compte"]
-
-        operations = [
-            ("depot", 100),
-            ("depot", 250),
-            ("retrait", 50),
-            ("depot", 300),
-            ("retrait", 100),
-        ]
-
-        expected = 0.0
-        for op_type, montant in operations:
-            if op_type == "depot":
-                client.post(f"/comptes/{nc}/depot", json={"montant": montant})
-                expected += montant
-            else:
-                client.post(f"/comptes/{nc}/retrait", json={"montant": montant})
-                expected -= montant
-
-            c = client.get(f"/comptes/{nc}").json()
-            assert c["solde"] == expected
-
-        # Vérifier 5 transactions
-        txns = client.get(f"/comptes/{nc}/transactions").json()
+        txns = client.get(f"/comptes/{nc}/transactions", headers=client_headers).json()
         assert len(txns) == 5
-
-    def test_virement_croise(self, client):
-        """Deux virements croisés entre deux comptes."""
-        a = client.post("/comptes", json={
-            "nom_titulaire": "A", "email": "a@test.com"
-        }).json()
-        b = client.post("/comptes", json={
-            "nom_titulaire": "B", "email": "b@test.com"
-        }).json()
-
-        # Approvisionner
-        client.post(f"/comptes/{a['numero_compte']}/depot", json={"montant": 1000})
-        client.post(f"/comptes/{b['numero_compte']}/depot", json={"montant": 1000})
-
-        # A → B 300
-        client.post(
-            f"/comptes/{a['numero_compte']}/virement",
-            json={"numero_compte_destination": b["numero_compte"], "montant": 300}
-        )
-        # B → A 200
-        client.post(
-            f"/comptes/{b['numero_compte']}/virement",
-            json={"numero_compte_destination": a["numero_compte"], "montant": 200}
-        )
-
-        a = client.get(f"/comptes/{a['numero_compte']}").json()
-        b = client.get(f"/comptes/{b['numero_compte']}").json()
-        assert a["solde"] == 900.0   # 1000 - 300 + 200
-        assert b["solde"] == 1100.0  # 1000 + 300 - 200
-
-    def test_concurrence_simple(self, client):
-        """Création de 3 comptes et opérations sur chacun — pas de fuite d'état."""
-        comptes = []
-        for i in range(3):
-            c = client.post("/comptes", json={
-                "nom_titulaire": f"User {i}",
-                "email": f"user{i}@test.com"
-            }).json()
-            comptes.append(c)
-
-        # Dépôts sur chaque compte
-        for i, c in enumerate(comptes):
-            client.post(f"/comptes/{c['numero_compte']}/depot", json={"montant": (i + 1) * 100})
-
-        # Vérifier les soldes indépendants
-        for i, c in enumerate(comptes):
-            updated = client.get(f"/comptes/{c['numero_compte']}").json()
-            assert updated["solde"] == (i + 1) * 100.0

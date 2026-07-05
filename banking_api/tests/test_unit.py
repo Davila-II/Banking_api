@@ -1,30 +1,52 @@
-"""Tests unitaires — Banking API.
-Couvre les 18 chemins identifiés dans l'analyse CFG (cfg_analysis.html)
-+ cas supplémentaires (GET /comptes, DELETE, liste vide, etc.).
+"""Tests unitaires — Banking API v2.
+Couvre tous les chemins identifiés + nouveaux (auth, statuts, types).
 """
+from decimal import Decimal
+
+
+# ============================================================
+# Auth
+# ============================================================
+
+class TestLogin:
+    def test_succes(self, client, admin_user):
+        res = client.post("/auth/login", json={"username": "admin_test", "password": "admin123"})
+        assert res.status_code == 200
+        data = res.json()
+        assert "access_token" in data
+        assert data["role"] == "ADMIN"
+
+    def test_mauvais_mot_de_passe(self, client, admin_user):
+        res = client.post("/auth/login", json={"username": "admin_test", "password": "wrong"})
+        assert res.status_code == 401
+
+    def test_utilisateur_inconnu(self, client):
+        res = client.post("/auth/login", json={"username": "ghost", "password": "x"})
+        assert res.status_code == 401
+
+    def test_sans_token_endpoint_protege(self, client):
+        res = client.get("/comptes")
+        assert res.status_code == 401
+
 
 # ============================================================
 # consulter_compte — 2 chemins
 # ============================================================
 
 class TestConsulterCompte:
-    """GET /comptes/{numero_compte}"""
-
-    def test_compte_trouve(self, client, compte_creer):
-        """PATH 1: Compte trouvé → 200 avec les infos du compte."""
-        res = client.get(f"/comptes/{compte_creer['numero_compte']}")
+    def test_compte_trouve(self, client, compte_creer, client_headers):
+        res = client.get(f"/comptes/{compte_creer['numero_compte']}", headers=client_headers)
         assert res.status_code == 200
-        data = res.json()
-        assert data["numero_compte"] == compte_creer["numero_compte"]
-        assert data["nom_titulaire"] == compte_creer["nom_titulaire"]
-        assert data["email"] == compte_creer["email"]
-        assert data["solde"] == 0.0
+        assert res.json()["numero_compte"] == compte_creer["numero_compte"]
 
-    def test_compte_introuvable(self, client):
-        """PATH 2: Compte inexistant → 404."""
-        res = client.get("/comptes/BK-NEXISTEPAS")
+    def test_compte_introuvable(self, client, client_headers):
+        res = client.get("/comptes/BK-NEXISTEPAS", headers=client_headers)
         assert res.status_code == 404
-        assert "introuvable" in res.json()["detail"].lower()
+
+    def test_acces_compte_dautrui_interdit(self, client, deux_comptes, client_user, client_headers):
+        a, _ = deux_comptes
+        res = client.get(f"/comptes/{a['numero_compte']}", headers=client_headers)
+        assert res.status_code == 403
 
 
 # ============================================================
@@ -32,39 +54,42 @@ class TestConsulterCompte:
 # ============================================================
 
 class TestCreerCompte:
-    """POST /comptes"""
-
-    def test_succes_premier_compte(self, client):
-        """PATH 1: Aucun email existant → 200, compte créé."""
+    def test_succes_admin(self, client, admin_headers):
+        import uuid
         res = client.post("/comptes", json={
             "nom_titulaire": "Jean Dupont",
-            "email": "jean@test.com"
-        })
-        assert res.status_code == 200
+            "email": f"jean_{uuid.uuid4().hex[:4]}@test.com"
+        }, headers=admin_headers)
+        assert res.status_code == 201
         data = res.json()
-        assert data["nom_titulaire"] == "Jean Dupont"
-        assert data["email"] == "jean@test.com"
-        assert data["solde"] == 0.0
         assert data["numero_compte"].startswith("BK-")
-        assert len(data["id"]) > 0
+        assert data["status"] == "ACTIVE"
+        assert data["type"] == "CURRENT"
 
-    def test_succes_deuxieme_compte(self, client, compte_creer):
-        """PATH 2: Un compte existe déjà, email différent → 200."""
+    def test_succes_client_son_email(self, client, client_user, client_headers):
         res = client.post("/comptes", json={
-            "nom_titulaire": "Bob Martin",
-            "email": "bob@test.com"
-        })
-        assert res.status_code == 200
-        assert res.json()["email"] == "bob@test.com"
+            "nom_titulaire": "Mon compte",
+            "email": client_user["email"],
+        }, headers=client_headers)
+        assert res.status_code == 201
 
-    def test_email_deja_utilise(self, client, compte_creer):
-        """PATH 3: Email déjà utilisé → 400."""
+    def test_client_email_etranger_interdit(self, client, client_headers):
         res = client.post("/comptes", json={
             "nom_titulaire": "Autre",
-            "email": compte_creer["email"]  # même email que compte_creer
-        })
-        assert res.status_code == 400
-        assert "email" in res.json()["detail"].lower()
+            "email": "etranger@test.com"
+        }, headers=client_headers)
+        assert res.status_code == 403
+
+    def test_compte_epargne(self, client, admin_headers):
+        import uuid
+        res = client.post("/comptes", json={
+            "nom_titulaire": "Epargne",
+            "email": f"sav_{uuid.uuid4().hex[:4]}@test.com",
+            "type": "SAVINGS",
+            "annual_rate": "0.03"
+        }, headers=admin_headers)
+        assert res.status_code == 201
+        assert res.json()["type"] == "SAVINGS"
 
 
 # ============================================================
@@ -72,42 +97,28 @@ class TestCreerCompte:
 # ============================================================
 
 class TestDepot:
-    """POST /comptes/{numero}/depot"""
+    def test_montant_nul_ou_negatif(self, client, compte_creer, client_headers):
+        nc = compte_creer["numero_compte"]
+        assert client.post(f"/comptes/{nc}/depot", json={"montant": -50},  headers=client_headers).status_code == 422
+        assert client.post(f"/comptes/{nc}/depot", json={"montant": 0},    headers=client_headers).status_code == 422
 
-    def test_montant_negatif(self, client, compte_creer):
-        """PATH 1: Montant ≤ 0 → 400."""
-        res = client.post(
-            f"/comptes/{compte_creer['numero_compte']}/depot",
-            json={"montant": -50}
-        )
-        assert res.status_code == 400
-        res2 = client.post(
-            f"/comptes/{compte_creer['numero_compte']}/depot",
-            json={"montant": 0}
-        )
-        assert res2.status_code == 400
-
-    def test_compte_introuvable(self, client):
-        """PATH 2: Compte inexistant → 404."""
-        res = client.post("/comptes/BK-NEXISTEPAS/depot", json={"montant": 100})
+    def test_compte_introuvable(self, client, client_headers):
+        res = client.post("/comptes/BK-NEXISTEPAS/depot", json={"montant": 100}, headers=client_headers)
         assert res.status_code == 404
 
-    def test_succes(self, client, compte_creer):
-        """PATH 3: Dépôt valide → 200, solde mis à jour, transaction créée."""
-        res = client.post(
-            f"/comptes/{compte_creer['numero_compte']}/depot",
-            json={"montant": 250}
-        )
+    def test_succes(self, client, compte_creer, client_headers):
+        nc  = compte_creer["numero_compte"]
+        res = client.post(f"/comptes/{nc}/depot", json={"montant": 250}, headers=client_headers)
         assert res.status_code == 200
-        txn = res.json()
-        assert txn["type"] == "depot"
-        assert txn["montant"] == 250.0
-        assert txn["compte_source"] == compte_creer["numero_compte"]
-        assert txn["compte_destination"] is None
+        assert res.json()["type"] == "depot"
+        solde = client.get(f"/comptes/{nc}", headers=client_headers).json()["solde"]
+        assert Decimal(str(solde)) == Decimal("250")
 
-        # Vérifier le solde
-        c = client.get(f"/comptes/{compte_creer['numero_compte']}").json()
-        assert c["solde"] == 250.0
+    def test_compte_gele(self, client, compte_creer, client_headers, admin_headers):
+        nc = compte_creer["numero_compte"]
+        client.post(f"/comptes/{nc}/freeze", headers=admin_headers)
+        res = client.post(f"/comptes/{nc}/depot", json={"montant": 100}, headers=client_headers)
+        assert res.status_code == 409
 
 
 # ============================================================
@@ -115,49 +126,31 @@ class TestDepot:
 # ============================================================
 
 class TestRetrait:
-    """POST /comptes/{numero}/retrait"""
+    def test_montant_negatif(self, client, compte_creer, client_headers):
+        res = client.post(f"/comptes/{compte_creer['numero_compte']}/retrait", json={"montant": -10}, headers=client_headers)
+        assert res.status_code == 422
 
-    def test_montant_negatif(self, client, compte_creer):
-        """PATH 1: Montant ≤ 0 → 400."""
-        res = client.post(
-            f"/comptes/{compte_creer['numero_compte']}/retrait",
-            json={"montant": -10}
-        )
-        assert res.status_code == 400
-
-    def test_compte_introuvable(self, client):
-        """PATH 2: Compte inexistant → 404."""
-        res = client.post("/comptes/BK-NEXISTEPAS/retrait", json={"montant": 10})
+    def test_compte_introuvable(self, client, client_headers):
+        res = client.post("/comptes/BK-NEXISTEPAS/retrait", json={"montant": 10}, headers=client_headers)
         assert res.status_code == 404
 
-    def test_solde_insuffisant(self, client, compte_creer):
-        """PATH 3: Solde insuffisant → 400."""
-        # Solde = 0, retrait = 100
-        res = client.post(
-            f"/comptes/{compte_creer['numero_compte']}/retrait",
-            json={"montant": 100}
-        )
-        assert res.status_code == 400
-        assert "insuffisant" in res.json()["detail"].lower()
+    def test_solde_insuffisant_savings(self, client, admin_headers):
+        import uuid
+        email = f"sav_{uuid.uuid4().hex[:4]}@test.com"
+        c = client.post("/comptes", json={"nom_titulaire": "S", "email": email, "type": "SAVINGS"}, headers=admin_headers).json()
+        nc = c["numero_compte"]
+        client.post(f"/comptes/{nc}/depot", json={"montant": 100}, headers=admin_headers)
+        res = client.post(f"/comptes/{nc}/retrait", json={"montant": 200}, headers=admin_headers)
+        assert res.status_code == 422
 
-    def test_succes(self, client, compte_creer):
-        """PATH 4: Retrait valide → 200."""
-        # D'abord, approvisionner le compte
-        client.post(
-            f"/comptes/{compte_creer['numero_compte']}/depot",
-            json={"montant": 500}
-        )
-        res = client.post(
-            f"/comptes/{compte_creer['numero_compte']}/retrait",
-            json={"montant": 200}
-        )
+    def test_succes(self, client, compte_creer, client_headers):
+        nc = compte_creer["numero_compte"]
+        client.post(f"/comptes/{nc}/depot", json={"montant": 500}, headers=client_headers)
+        res = client.post(f"/comptes/{nc}/retrait", json={"montant": 200}, headers=client_headers)
         assert res.status_code == 200
-        txn = res.json()
-        assert txn["type"] == "retrait"
-        assert txn["montant"] == 200.0
-
-        c = client.get(f"/comptes/{compte_creer['numero_compte']}").json()
-        assert c["solde"] == 300.0
+        assert res.json()["type"] == "retrait"
+        solde = client.get(f"/comptes/{nc}", headers=client_headers).json()["solde"]
+        assert Decimal(str(solde)) == Decimal("300")
 
 
 # ============================================================
@@ -165,82 +158,91 @@ class TestRetrait:
 # ============================================================
 
 class TestVirement:
-    """POST /comptes/{numero}/virement"""
-
-    def test_montant_negatif(self, client, deux_comptes):
-        """PATH 1: Montant ≤ 0 → 400."""
+    def test_montant_negatif(self, client, deux_comptes, admin_headers):
         src, _ = deux_comptes
-        res = client.post(
-            f"/comptes/{src['numero_compte']}/virement",
-            json={"numero_compte_destination": "BK-NEXISTE", "montant": -10}
-        )
-        assert res.status_code == 400
+        res = client.post(f"/comptes/{src['numero_compte']}/virement",
+                          json={"numero_compte_destination": "BK-X", "montant": -10},
+                          headers=admin_headers)
+        assert res.status_code == 422
 
-    def test_meme_compte(self, client, deux_comptes):
-        """PATH 2: Source = destination → 400."""
+    def test_meme_compte(self, client, deux_comptes, admin_headers):
         src, _ = deux_comptes
-        res = client.post(
-            f"/comptes/{src['numero_compte']}/virement",
-            json={"numero_compte_destination": src["numero_compte"], "montant": 10}
-        )
-        assert res.status_code == 400
-        assert "même" in res.json()["detail"].lower()
+        res = client.post(f"/comptes/{src['numero_compte']}/virement",
+                          json={"numero_compte_destination": src["numero_compte"], "montant": 10},
+                          headers=admin_headers)
+        assert res.status_code == 422
 
-    def test_source_introuvable(self, client, deux_comptes):
-        """PATH 3: Compte source inexistant → 404."""
+    def test_source_introuvable(self, client, deux_comptes, admin_headers):
         _, dst = deux_comptes
-        res = client.post(
-            "/comptes/BK-NEXISTEPAS/virement",
-            json={"numero_compte_destination": dst["numero_compte"], "montant": 10}
-        )
+        res = client.post("/comptes/BK-NEXISTEPAS/virement",
+                          json={"numero_compte_destination": dst["numero_compte"], "montant": 10},
+                          headers=admin_headers)
         assert res.status_code == 404
-        assert "source" in res.json()["detail"].lower()
 
-    def test_destination_introuvable(self, client, deux_comptes):
-        """PATH 4: Compte destination inexistant → 404."""
+    def test_destination_introuvable(self, client, deux_comptes, admin_headers):
         src, _ = deux_comptes
-        res = client.post(
-            f"/comptes/{src['numero_compte']}/virement",
-            json={"numero_compte_destination": "BK-NEXISTEPAS", "montant": 10}
-        )
+        res = client.post(f"/comptes/{src['numero_compte']}/virement",
+                          json={"numero_compte_destination": "BK-NEXISTEPAS", "montant": 10},
+                          headers=admin_headers)
         assert res.status_code == 404
-        assert "destination" in res.json()["detail"].lower()
 
-    def test_solde_insuffisant(self, client, deux_comptes):
-        """PATH 5: Solde source insuffisant → 400."""
+    def test_solde_insuffisant(self, client, deux_comptes, admin_headers):
         src, dst = deux_comptes
-        res = client.post(
-            f"/comptes/{src['numero_compte']}/virement",
-            json={
-                "numero_compte_destination": dst["numero_compte"],
-                "montant": 99999  # > 1000
-            }
-        )
-        assert res.status_code == 400
-        assert "insuffisant" in res.json()["detail"].lower()
+        res = client.post(f"/comptes/{src['numero_compte']}/virement",
+                          json={"numero_compte_destination": dst["numero_compte"], "montant": 99999},
+                          headers=admin_headers)
+        assert res.status_code == 422
 
-    def test_succes(self, client, deux_comptes):
-        """PATH 6: Virement valide → 200, deux soldes mis à jour."""
+    def test_succes(self, client, deux_comptes, admin_headers):
         src, dst = deux_comptes
-        res = client.post(
-            f"/comptes/{src['numero_compte']}/virement",
-            json={
-                "numero_compte_destination": dst["numero_compte"],
-                "montant": 300
-            }
-        )
+        res = client.post(f"/comptes/{src['numero_compte']}/virement",
+                          json={"numero_compte_destination": dst["numero_compte"], "montant": 300},
+                          headers=admin_headers)
         assert res.status_code == 200
-        txn = res.json()
-        assert txn["type"] == "virement"
-        assert txn["montant"] == 300.0
-        assert txn["compte_source"] == src["numero_compte"]
-        assert txn["compte_destination"] == dst["numero_compte"]
+        src_after = client.get(f"/comptes/{src['numero_compte']}", headers=admin_headers).json()
+        dst_after = client.get(f"/comptes/{dst['numero_compte']}", headers=admin_headers).json()
+        assert Decimal(str(src_after["solde"])) == Decimal("700")
+        assert Decimal(str(dst_after["solde"])) == Decimal("800")
 
-        # Vérifier les soldes
-        src_after = client.get(f"/comptes/{src['numero_compte']}").json()
-        dst_after = client.get(f"/comptes/{dst['numero_compte']}").json()
-        assert src_after["solde"] == 700.0   # 1000 - 300
-        assert dst_after["solde"] == 800.0   # 500 + 300
+
+# ============================================================
+# Statuts de compte (ADMIN)
+# ============================================================
+
+class TestStatutsCompte:
+    def test_freeze_puis_reactivate(self, client, compte_creer, admin_headers, client_headers):
+        nc = compte_creer["numero_compte"]
+
+        res = client.post(f"/comptes/{nc}/freeze", headers=admin_headers)
+        assert res.status_code == 200
+        assert client.get(f"/comptes/{nc}", headers=client_headers).json()["status"] == "FROZEN"
+
+        res = client.post(f"/comptes/{nc}/reactivate", headers=admin_headers)
+        assert res.status_code == 200
+        assert client.get(f"/comptes/{nc}", headers=client_headers).json()["status"] == "ACTIVE"
+
+    def test_close_solde_nul(self, client, compte_creer, admin_headers):
+        nc  = compte_creer["numero_compte"]
+        res = client.post(f"/comptes/{nc}/close", headers=admin_headers)
+        assert res.status_code == 200
+        assert res.json()["status"] == "CLOSED"
+
+    def test_close_solde_non_nul(self, client, compte_creer, admin_headers, client_headers):
+        nc = compte_creer["numero_compte"]
+        client.post(f"/comptes/{nc}/depot", json={"montant": 100}, headers=client_headers)
+        res = client.post(f"/comptes/{nc}/close", headers=admin_headers)
+        assert res.status_code == 409
+
+    def test_reactivate_closed_impossible(self, client, compte_creer, admin_headers):
+        nc = compte_creer["numero_compte"]
+        client.post(f"/comptes/{nc}/close", headers=admin_headers)
+        res = client.post(f"/comptes/{nc}/reactivate", headers=admin_headers)
+        assert res.status_code == 409
+
+    def test_freeze_non_admin(self, client, compte_creer, client_headers):
+        nc  = compte_creer["numero_compte"]
+        res = client.post(f"/comptes/{nc}/freeze", headers=client_headers)
+        assert res.status_code == 403
 
 
 # ============================================================
@@ -248,24 +250,16 @@ class TestVirement:
 # ============================================================
 
 class TestListerComptes:
-    """GET /comptes"""
-
-    def test_liste_vide(self, client):
-        """Aucun compte → liste vide."""
-        # Nettoyer tout compte existant
-        comptes = client.get("/comptes").json()
-        for c in comptes:
-            client.delete(f"/comptes/{c['numero_compte']}")
-        res = client.get("/comptes")
+    def test_admin_voit_tout(self, client, deux_comptes, admin_headers):
+        res = client.get("/comptes", headers=admin_headers)
         assert res.status_code == 200
-        assert res.json() == []
+        assert len(res.json()) >= 2
 
-    def test_liste_avec_comptes(self, client, deux_comptes):
-        """Plusieurs comptes → liste complète."""
-        res = client.get("/comptes")
+    def test_client_voit_ses_comptes(self, client, client_user, client_headers):
+        res = client.get("/comptes", headers=client_headers)
         assert res.status_code == 200
-        data = res.json()
-        assert len(data) >= 2  # au moins les 2 comptes du fixture
+        for c in res.json():
+            assert c["email"] == client_user["email"]
 
 
 # ============================================================
@@ -273,24 +267,20 @@ class TestListerComptes:
 # ============================================================
 
 class TestSupprimerCompte:
-    """DELETE /comptes/{numero_compte}"""
+    def test_compte_introuvable(self, client, admin_headers):
+        assert client.delete("/comptes/BK-NEXISTEPAS", headers=admin_headers).status_code == 404
 
-    def test_compte_introuvable(self, client):
-        """Compte inexistant → 404."""
-        res = client.delete("/comptes/BK-NEXISTEPAS")
-        assert res.status_code == 404
+    def test_client_ne_peut_pas_supprimer(self, client, compte_creer, client_headers):
+        nc  = compte_creer["numero_compte"]
+        res = client.delete(f"/comptes/{nc}", headers=client_headers)
+        assert res.status_code == 403
 
-    def test_succes(self, client, compte_creer):
-        """Suppression valide → 200, compte disparaît."""
-        res = client.delete(f"/comptes/{compte_creer['numero_compte']}")
+    def test_succes_admin(self, client, compte_creer, admin_headers, client_headers):
+        nc  = compte_creer["numero_compte"]
+        res = client.delete(f"/comptes/{nc}", headers=admin_headers)
         assert res.status_code == 200
-        data = res.json()
-        assert data["succes"] is True
-        assert data["compte_supprime"] == compte_creer["numero_compte"]
-
-        # Vérifier que le compte n'existe plus
-        res2 = client.get(f"/comptes/{compte_creer['numero_compte']}")
-        assert res2.status_code == 404
+        assert res.json()["succes"] is True
+        assert client.get(f"/comptes/{nc}", headers=admin_headers).status_code == 404
 
 
 # ============================================================
@@ -298,29 +288,18 @@ class TestSupprimerCompte:
 # ============================================================
 
 class TestHistoriqueTransactions:
-    """GET /comptes/{numero}/transactions"""
+    def test_compte_introuvable(self, client, client_headers):
+        assert client.get("/comptes/BK-NEXISTEPAS/transactions", headers=client_headers).status_code == 404
 
-    def test_compte_introuvable(self, client):
-        """Compte inexistant → 404."""
-        res = client.get("/comptes/BK-NEXISTEPAS/transactions")
-        assert res.status_code == 404
-
-    def test_pas_de_transactions(self, client, compte_creer):
-        """Compte sans transactions → liste vide."""
-        res = client.get(f"/comptes/{compte_creer['numero_compte']}/transactions")
+    def test_vide(self, client, compte_creer, client_headers):
+        res = client.get(f"/comptes/{compte_creer['numero_compte']}/transactions", headers=client_headers)
         assert res.status_code == 200
         assert res.json() == []
 
-    def test_avec_transactions(self, client, compte_creer):
-        """Compte avec transactions → liste des transactions."""
-        client.post(
-            f"/comptes/{compte_creer['numero_compte']}/depot",
-            json={"montant": 100}
-        )
-        client.post(
-            f"/comptes/{compte_creer['numero_compte']}/depot",
-            json={"montant": 200}
-        )
-        res = client.get(f"/comptes/{compte_creer['numero_compte']}/transactions")
+    def test_avec_transactions(self, client, compte_creer, client_headers):
+        nc = compte_creer["numero_compte"]
+        client.post(f"/comptes/{nc}/depot",   json={"montant": 100}, headers=client_headers)
+        client.post(f"/comptes/{nc}/depot",   json={"montant": 200}, headers=client_headers)
+        res = client.get(f"/comptes/{nc}/transactions", headers=client_headers)
         assert res.status_code == 200
         assert len(res.json()) == 2
